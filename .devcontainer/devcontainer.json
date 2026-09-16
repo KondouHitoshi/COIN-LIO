@@ -1,0 +1,26 @@
+{
+  "name": "COIN-LIO Workspace",
+  "dockerComposeFile": "../docker-compose.yml",
+  "service": "coin-lio",
+  "runServices": [
+    "coin-lio",
+    "foxglove-bridge"
+  ],
+  "workspaceFolder": "/home/${localEnv:USER}/catkin_ws",
+  "remoteUser": "${localEnv:USER}",
+  "shutdownAction": "stopCompose",
+  "overrideCommand": true,
+  "initializeCommand": "mkdir -p /home/kondo/Desktop/data && xhost +SI:localuser:${localEnv:USER} || true",
+  "postStartCommand": "bash /home/${localEnv:USER}/catkin_ws/src/COIN-LIO/.devcontainer/post-start.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "llvm-vs-code-extensions.vscode-clangd",
+        "ms-vscode.cmake-tools"
+      ],
+      "settings": {
+        "clangd.path": "/usr/bin/clangd"
+      }
+    }
+  }
+}

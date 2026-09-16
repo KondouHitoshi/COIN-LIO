@@ -1,0 +1,47 @@
+x-coin-lio-common: &coin-lio-common
+  image: coin-lio:noetic
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+    args:
+      USERNAME: ${USER:-ros}
+      USER_UID: ${USER_UID:-1000}
+      USER_GID: ${USER_GID:-1000}
+  network_mode: host
+  ipc: host
+  gpus: all
+  environment:
+    DISPLAY: ${DISPLAY:-:0}
+    XDG_RUNTIME_DIR: /tmp/runtime-${USER:-ros}
+    QT_X11_NO_MITSHM: "1"
+    __GLX_VENDOR_LIBRARY_NAME: ${GLX_VENDOR_LIBRARY_NAME:-nvidia}
+    __NV_PRIME_RENDER_OFFLOAD: ${NV_PRIME_RENDER_OFFLOAD:-1}
+    NVIDIA_VISIBLE_DEVICES: all
+    NVIDIA_DRIVER_CAPABILITIES: all
+    COIN_LIO_AUTO_BUILD: ${COIN_LIO_AUTO_BUILD:-1}
+    COIN_LIO_FORCE_BUILD: ${COIN_LIO_FORCE_BUILD:-0}
+    FOXGLOVE_BRIDGE_PORT: ${FOXGLOVE_BRIDGE_PORT:-8765}
+    ROS_MASTER_URI: http://localhost:11311
+    ROS_HOSTNAME: localhost
+  volumes:
+    - ../..:/home/${USER:-ros}/catkin_ws:rw
+    - ${COIN_LIO_DATA_DIR:-/home/kondo/Desktop/data}:/home/kondo/Desktop/data:rw
+    - ${COIN_LIO_DATA_DIR:-/home/kondo/Desktop/data}:/data:rw
+    - /tmp/.X11-unix:/tmp/.X11-unix:rw
+  working_dir: /home/${USER:-ros}/catkin_ws
+
+services:
+  coin-lio:
+    <<: *coin-lio-common
+    container_name: coin-lio
+    stdin_open: true
+    tty: true
+    command: bash
+
+  foxglove-bridge:
+    <<: *coin-lio-common
+    container_name: coin-lio-foxglove
+    command: >
+      roslaunch --screen foxglove_bridge foxglove_bridge.launch
+      address:=0.0.0.0
+      port:=${FOXGLOVE_BRIDGE_PORT:-8765}
