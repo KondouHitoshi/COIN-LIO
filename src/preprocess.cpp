@@ -32,11 +32,14 @@ void Preprocess::ouster_handler(const sensor_msgs::PointCloud2::ConstPtr &msg, P
     added_pt.y = pl_orig.points[i].y;
     added_pt.z = pl_orig.points[i].z - lidar_sensor_z_offset;
 
-    if (reflectivity) {
-      added_pt.intensity = pl_orig.points[i].reflectivity;
-    } else {
-      added_pt.intensity = pl_orig.points[i].intensity;
-    }
+    // Carry raw Ouster attributes in unused PointXYZINormal padding. Both
+    // survive motion undistortion and image processing without modification.
+    added_pt.data_n[3] = static_cast<float>(pl_orig.points[i].reflectivity);
+    added_pt.data_c[2] = static_cast<float>(pl_orig.points[i].ring);
+
+    // COIN-LIO continues to process intensity only. Reflectivity is carried
+    // alongside it exclusively for point cloud publication.
+    added_pt.intensity = pl_orig.points[i].intensity;
     
     // to keep track of original point index
     added_pt.normal_x = i;

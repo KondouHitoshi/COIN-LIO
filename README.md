@@ -116,6 +116,37 @@ Play your data:
 ### Line Artifact Removal
 The line artifact removal filter can be tested and tuned using the provided notebook:
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ethz-asl/COIN-LIO/blob/main/scripts/artifact_removal.ipynb)
+
+### Published Point Clouds
+
+Point clouds are published when `publish/scan_publish_en` is enabled:
+
+| Topic | Coordinates | Additional fields |
+| --- | --- | --- |
+| `/cloud_registered` | Motion-undistorted, world frame (`camera_init`) | Existing fields plus `ring` |
+| `/cloud_registered_body` | Motion-undistorted, IMU frame (`body`) | Existing fields plus `ring`; also requires `publish/scan_bodyframe_pub_en` |
+| `/cloud_registered2` | Motion-undistorted, scan-end LiDAR frame (`lidar`) | Fields listed below |
+| `/cloud_registered_raw` | Before motion undistortion, LiDAR frame (`lidar`) | Fields listed below |
+
+Both `/cloud_registered2` and `/cloud_registered_raw` contain `x`, `y`, `z` and:
+
+| Field | PointCloud2 type | Meaning |
+| --- | --- | --- |
+| `intensity` | FLOAT32 | Original Ouster intensity |
+| `reflectivity` | UINT16 | Original Ouster reflectivity |
+| `corrected_intensity` | FLOAT32 | COIN-LIO image-processed intensity for the same point |
+| `time` | FLOAT64 | Absolute ROS acquisition time in seconds |
+| `source_index` | UINT32 | Original row-major index in the input Ouster cloud, before point removal |
+| `ring` | UINT8 | Original Ouster laser ring ID |
+
+The raw cloud uses the same valid points after NaN/blind-range removal and the
+same LiDAR sensor Z offset as the processed cloud. Only its XYZ coordinates are
+captured before motion undistortion; `corrected_intensity` is assigned after image
+processing. The two clouds have matching point order and attributes. Their header
+timestamps are the scan end time; each point's `time` remains its acquisition
+time. The raw cloud is a rolling scan, so its points are not all acquired at its
+header timestamp.
+
 ## Acknowledgements
 COIN-LIO builds on top of [FAST-LIO2](https://github.com/hku-mars/FAST_LIO) for the point-to-plane registration. 
 Our dashboard was inspired by [DLIO](https://github.com/vectr-ucla/direct_lidar_inertial_odometry). We thank the authors for open-sourcing their outstanding works.

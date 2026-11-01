@@ -58,6 +58,7 @@
 #include "feature_manager.h"
 #include "image_processing.h"
 #include "imu_processing.h"
+#include "point_cloud_publishing.h"
 #include "preprocess.h"
 #include "projector.h"
 #include "timing.h"
@@ -405,7 +406,10 @@ void map_incremental()
 }
 
 PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());
-void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
+void publish_frame_world(const ros::Publisher & pubLaserCloudFull,
+                         const ros::Publisher & pubLaserCloudReflectivity,
+                         const ros::Publisher & pubLaserCloudRaw,
+                         const PointCloudXYZI & raw_scan)
 {
     if(scan_pub_en)
     {
@@ -413,17 +417,37 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
         int size = laserCloudFullRes->points.size();
         PointCloudXYZI::Ptr laserCloudWorld( \
                         new PointCloudXYZI(size, 1));
+        pcl::PointCloud<PointXYZIReflectivity>::Ptr laserCloudUndistortedReflectivity( \
+                        new pcl::PointCloud<PointXYZIReflectivity>(size, 1));
+        pcl::PointCloud<PointXYZIReflectivity> laserCloudRaw(size, 1);
 
         for (int i = 0; i < size; i++)
         {
             RGBpointBodyToWorld(&laserCloudFullRes->points[i], \
                                 &laserCloudWorld->points[i]);
+            const PointType &point = laserCloudFullRes->points[i];
+            laserCloudUndistortedReflectivity->points[i] =
+                makePublishedPoint(point, point, Measures.lidar_beg_time);
+            laserCloudRaw.points[i] =
+                makePublishedPoint(raw_scan.points[i], point, Measures.lidar_beg_time);
         }
         sensor_msgs::PointCloud2 laserCloudmsg;
         pcl::toROSMsg(*laserCloudWorld, laserCloudmsg);
+        addRingField(*laserCloudFullRes, laserCloudmsg);
         laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
         laserCloudmsg.header.frame_id = "camera_init";
         pubLaserCloudFull.publish(laserCloudmsg);
+
+        sensor_msgs::PointCloud2 laserCloudReflectivityMsg;
+        pcl::toROSMsg(*laserCloudUndistortedReflectivity, laserCloudReflectivityMsg);
+        laserCloudReflectivityMsg.header.stamp = laserCloudmsg.header.stamp;
+        laserCloudReflectivityMsg.header.frame_id = "lidar";
+        pubLaserCloudReflectivity.publish(laserCloudReflectivityMsg);
+
+        sensor_msgs::PointCloud2 laserCloudRawMsg;
+        pcl::toROSMsg(laserCloudRaw, laserCloudRawMsg);
+        laserCloudRawMsg.header = laserCloudReflectivityMsg.header;
+        pubLaserCloudRaw.publish(laserCloudRawMsg);
     }
 
     /**************** save map ****************/
@@ -476,6 +500,7 @@ void publish_frame_body(const ros::Publisher & pubLaserCloudFull_body)
 
     sensor_msgs::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laserCloudIMUBody, laserCloudmsg);
+    addRingField(*feats_undistort, laserCloudmsg);
     laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
     laserCloudmsg.header.frame_id = "body";
     pubLaserCloudFull_body.publish(laserCloudmsg);
@@ -525,6 +550,25 @@ void publish_odometry(const ros::Publisher & pubOdomAftMapped)
     q.setZ(odomAftMapped.pose.pose.orientation.z);
     transform.setRotation( q );
     br.sendTransform( tf::StampedTransform( transform, odomAftMapped.header.stamp, "camera_init", "body" ) );
+
+    // /cloud_registered2 is expressed in the scan-end LiDAR frame. Publish
+    // the LiDAR-to-IMU extrinsic as body -> lidar so RViz can transform it into
+    // camera_init without changing the point coordinates themselves.
+    tf::Transform body_to_lidar;
+    body_to_lidar.setOrigin(tf::Vector3(
+        state_point.offset_T_L_I(0),
+        state_point.offset_T_L_I(1),
+        state_point.offset_T_L_I(2)));
+    Eigen::Quaterniond body_lidar_orientation(
+        state_point.offset_R_L_I.toRotationMatrix());
+    tf::Quaternion body_lidar_q(
+        body_lidar_orientation.x(),
+        body_lidar_orientation.y(),
+        body_lidar_orientation.z(),
+        body_lidar_orientation.w());
+    body_to_lidar.setRotation(body_lidar_q);
+    br.sendTransform(tf::StampedTransform(
+        body_to_lidar, odomAftMapped.header.stamp, "body", "lidar"));
 }
 
 void publish_path(const ros::Publisher pubPath)
@@ -1029,6 +1073,15 @@ int main(int argc, char** argv)
     /*** ROS subscribe initialization ***/
     ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>("/Odometry", 100000);
     ros::Publisher pubLaserCloudFull = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100000);
+    // Motion-undistorted scan in the scan-end LiDAR frame, containing the
+    // raw intensity, corrected intensity, untouched raw reflectivity, and the
+    // absolute per-point ROS acquisition time, original Ouster source index,
+    // and sensor ring ID.
+    ros::Publisher pubLaserCloudReflectivity =
+        nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered2", 100000);
+    // Same attributes as /cloud_registered2 with pre-undistortion coordinates.
+    ros::Publisher pubLaserCloudRaw =
+        nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered_raw", 100000);
     ros::Publisher pubLaserCloudFull_body = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered_body", 100000);
     ros::Publisher pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2>("/cloud_effected", 100000);
     ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>("/Laser_map", 100000);
@@ -1071,6 +1124,10 @@ int main(int argc, char** argv)
             timing::Timer pre_timer("pre");
 
             feats_undistort = Measures.lidar;
+            // Process undistorts Measures.lidar in place. Save an independent
+            // copy before it changes XYZ; point order is preserved throughout.
+            PointCloudXYZI raw_scan;
+            if (scan_pub_en) raw_scan = *Measures.lidar;
             std::vector<M4D> vec_T_Li_Lk;
             std::vector<int> vec_idx(Measures.lidar->points.size(),0);
 
@@ -1293,7 +1350,9 @@ int main(int argc, char** argv)
 
             // Publish points
             if (path_en) publish_path(pubPath);
-            if (scan_pub_en || pcd_save_en)      publish_frame_world(pubLaserCloudFull);
+            if (scan_pub_en || pcd_save_en)
+                publish_frame_world(pubLaserCloudFull, pubLaserCloudReflectivity,
+                                    pubLaserCloudRaw, raw_scan);
             if (scan_pub_en && scan_body_pub_en) publish_frame_body(pubLaserCloudFull_body);
 
             full_cycle_timer.Stop();
